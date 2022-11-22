@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keke Racer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <script type="module" >
+		
+        import * as THREE from "../modules/three.module.js";
+        import * as CANNON from "../modules/cannon-es.js";
+        import CannonDebugger from "./modules/cannon-es-debugger.js";
+        import { OrbitControls } from "../modules/OrbitControls.js";
+        
+        import { GLTFLoader } from "../modules/GLTFLoader.js";
+  
+        // DECLARE VARIABLES
+        let scene, camera, renderer; // 3js initScene()
+        let world, cannonDebugger; // cannon.js initWorld()
+        let timeStep = 1/60; 
+        let controls;
+        let groundMaterial;
+        let kekeBody, kekeMesh; // player
+        let speed = 0, maxSpeed = 1, acceleration = 0.25, angle = 0; // key controls
+
+        // SETUP FUNCTIONS
+        initScene(); //3js
+        initWorld(); //cannon world, debugger, set gravity
+        initOrbitControls();
+        initLights(); // lights
+        createGround(); // create ground
+        createPlayer(); // create keke
+        createRamp(); // create ramp
+        animate(); 
+
+
+        // 3js: SCENE, SKYBOX, CAMERA, RENDERER
+
+        function initScene() {
+
+            scene = new THREE.Scene();
+
+            scene.background = new THREE.CubeTextureLoader() // create new Cube TextureLoader
+            .setPath( '../Skybox/')// all images in the skybox folder in directory, 
+            .load( [
+                'Right.png', // x pos
+                'Left.png', // x neg
+                'Top.png', // y pos
+                'Bottom.png', //y neg
+                'Front.png', // z pos
+                'Back.png' //z neg
+            ] );
+
+            // CAMERA 
+            camera = new THREE.PerspectiveCamera(
+                75, // field of view from top to bottom in degrees
+                window.innerWidth / window.innerHeight, // aspect ratio 
+                1, // near: objects start appearing this distance from camera 
+                1000 // far: objects stop appearing this distance from camera
+                ); 
+            camera.position.set(0, 5, -15); // x, y, z temporary position until make chasecam   
+            
+            // RENDERER
+            renderer = new THREE.WebGLRenderer( {antialias: true}); // smooths edges
+            renderer.setPixelRatio( window.devicePixelRatio ); // set device pixel ratio //renderer.outputEncoding = THREE. SRGBEncoding;
+            renderer.setSize( window.innerWidth, window.innerHeight ); // resize output canvas
+            document.body.appendChild(renderer.domElement); // add renderer to HTML document
+        
+        }
+
+
+        // CREATE CANNON WORLD, SET GRAVITY, START DEBUGGER
+
+        function initWorld() {
+            // CANNON.JS WORLD 
+            world = new CANNON.World(); 
+            world.gravity.set(0, -10, 0); // set gravity on y axis
+            //  debugger puts wireframe on bodies so you do not have to put 3js meshes on them
+         cannonDebugger = new CannonDebugger(scene, world, {
+            color: 0xffffff,  //wireframe color 
+            scale: 1.0, // wireframe scale
+          });
+        }
+
+        function initOrbitControls() {
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // adds deceleration effect
+            controls.dampingFactor = 0.05; // damps the effects of inertia(resistance to change)
+            controls.maxDistance = 1000; // max dolly out
+        }
+
+        function initLights() {
+            const light = new THREE.DirectionalLight();
+            light.position.set(25, 120, 25); //x, y, z
+            scene.add(light);
+        }
+
+        function createGround() {
+
+            // create physics material for ground
+            groundMaterial = new CANNON.Material("groundMaterial");
+
+            // create shape for body plane or box
+            const groundShape = new CANNON.Plane();
+            //const groundShape = new CANNON.BOX(new CANNON.Vec3(12,0.5,12));
+
+            // create body: pass in mass, shape, material
+            const groundBody = new CANNON.Body( {mass: 0, shape: groundShape, material: groundMaterial } );
+
+            // set rotation, rotate ground so it is flat on y axis +y is up
+            groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI/2 );
+
+            // add body to physics world
+            world.addBody( groundBody );
+
+
+        }
+
+        function createPlayer() {
+
+            // create physics material for keke body
+            const kekeMaterial = new CANNON.Material("kekeMaterial");
+
+            // create contact material - defines how player behaves on ground and ramp
+            const slippery_ground_cm = new CANNON.ContactMaterial(groundMaterial, kekeMaterial, {
+                friction: 0.5, // set friction (0 is no friction)
+                restitution: 0.5, // set bounciness (1 is very bouncy)
+                contactEquationStiffness: 1e9, // controls sponginess of contacts (lower = more spongy)
+                contactEquationRelaxation: 3, // relaxation time of contact equations (higher = more spongy)
+                frictionEquationStiffness: 1e5, // stiffness of friction equations ( higher = greater friction effect)
+                frictionEquationRelaxation: 3, // relaxation time of friction equations ( higher = greater friction effect)
+            });
+
+            world.addContactMaterial(slippery_ground_cm); // add contact material to physics world
+
+            // create body shape
+            const kekeBodyShape = new CANNON.Box(new CANNON.Vec3(1, 0.5, 1.5)); //create body shape using 1/2 dimensions
+
+            // body moved by user - DYNAMIC BODY, mass is always > 0
+            kekeBody = new CANNON.Body({mass:0.5, material: kekeMaterial, shape: kekeBodyShape}); //create keke body
+
+            kekeBody.position.set(0, 0, 0); // set position of body (x, y, z)
+
+            world.addBody( kekeBody ); // add body to world
+
+            // Load 3d model
+            const Gloader = new GLTFLoader(); // create instance of GLTF loader
+
+            Gloader.load("../models/scenekk.gltf", (gltf) => { // load keke space gltf from 3D folder, run function
+                kekeMesh = gltf.scene; // kekeMesh is gltf model
+                kekeMesh.scale.set(1, 1, 1);
+                kekeMesh.position.copy(kekeBody.position); //set model postion from body
+                kekeMesh.quaternion.copy(kekeBody.quaternion); // set model rotation from body
+
+                scene.add(kekeMesh); // add model to scene
+            })
+
+
+
+        }
+
+        function createRamp() {
+            
+            // ramp body shape
+            const rampShape = new CANNON.Box(new CANNON.Vec3(5, 1, 10)); // width, height, length
+
+            // create ramp body with no mass, rampShape above, and same material as ground
+            const rampBody = new CANNON.Body({ mass: 0, shape: rampShape, material: groundMaterial });
+
+            // set ramp body position
+            rampBody.position = new CANNON.Vec3(0, 1, 15); // x, y, z
+
+            // set ramp body rotation: rotate ramp on x axis by -Math.PI/12 (-15 degrees)
+            rampBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI/12);
+
+            // add rampBody to physics world
+            world.addBody(rampBody);
+        }
+
+        document.onkeydown = (event) => {
+            console.log(event);
+            switch(event.key) {
+                case "ArrowLeft":
+                    angle += (Math.PI/180); // turn left by 1 degree converted to radians
+                    break;
+
+                case "ArrowRight":
+                    angle -= (Math.PI/180); // turn right by 1 degree converted to radians
+                    break;
+
+                case "ArrowUp":
+                    speed += acceleration; // add acceleration to speed
+                    break;
+
+                case "ArrowDown":
+                    speed -= acceleration; // subtract acceleration from speed
+                    break;
+            }
+            kekeBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
+        }
+
+        function moveKeke() {
+
+            // set max speed
+            if( speed > maxSpeed) speed = maxSpeed;
+
+            // cannot reverse
+            if( speed < 0 ) speed = 0;
+
+            // update position based on unit circle
+            kekeBody.position.x += speed * Math.sin(angle); 
+            kekeBody.position.z += speed * Math.cos(angle); 
+
+            // update position and rotation of keke mesh from
+
+            if(kekeMesh) {
+                kekeMesh.position.copy(kekeBody.position);
+                kekeMesh.quaternion.copy(kekeBody.quaternion);
+            }
+
+        }
+
+
+        function animate() {  
+            controls.update(); // need to update orbit controls when enable damping
+
+            cannonDebugger.update(); // update wireframe position and rotation of bodies,
+                
+            world.step(timeStep); // step the simulation
+
+            moveKeke(); // update body position and rotation
+                
+            renderer.render( scene, camera );
+                
+            requestAnimationFrame( animate );
+
+        }
+
+
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( window.innerWidth, window.innerHeight );
+        }
+
+        window.addEventListener( 'resize', onWindowResize ); // handle wnidow resizing
+
+            
+
+
+
+
+
+
+        
+    </script>
+
+</body>
+</html>
